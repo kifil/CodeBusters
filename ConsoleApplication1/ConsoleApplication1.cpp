@@ -12,10 +12,10 @@
 
 using namespace std;
 
-#define xMin 0;
-#define yMin 0;
-#define xMax 16001;
-#define yMax 9001;
+int XMIN = 0;
+int YMIN = 0;
+int XMAX = 16001;
+int YMAX = 9001;
 
 struct Point {
 	int x;
@@ -32,8 +32,8 @@ enum class EntityState {
 	carryingGhost = 1
 };
 enum class EntityType {
-	myTeam = 0,
-	enemyTeam = 1,
+	teamOrange = 0,
+	teamPurple = 1,
 	ghost = -1
 };
 enum class EntityAction {
@@ -54,12 +54,12 @@ class Entity {
 	int ScoreGoBack();
 	int ScoreRelease();
 	bool IsNearGhost();
+	void SetNewSearchTarget();
 public:
 	int entityID;
-	//int xPosition;
-	//int yPosition;
 	Point position;
 	Point searchTarget;
+	Point baseLocation;
 	EntityType entityType;
 	EntityState entityState;
 	EntityAction entityAction;
@@ -68,9 +68,14 @@ public:
 	Entity();
 	Entity(int, int, int, int, int, int);
 	void UpdateEntity(int, int, int, int);
+	
 	string GetAction();
 
 };
+
+vector<Entity> visibleEntities;
+vector<Entity> myBusters;
+vector<Entity> ghosts;
 
 Entity::Entity()
 {}
@@ -83,15 +88,15 @@ Entity::Entity(int a, int b, int c, int d, int e,  int g)
 	entityState = EntityState(e);
 	value = g;
 
-	srand(time(NULL) * entityID);
-	int x = rand() % xMax;
-	int y = rand() % yMax;
-	searchTarget = Point(x, y);
-}
+	SetNewSearchTarget();
 
-vector<Entity> visibleEntities;
-vector<Entity> myBusters;
-vector<Entity> ghosts;
+	if (entityType == EntityType::teamOrange) {
+		baseLocation = Point(XMIN, YMIN);
+	}
+	else if (entityType == EntityType::teamPurple) {
+		baseLocation = Point(XMAX, YMAX);
+	}
+}
 
 void Entity::UpdateEntity(int a, int b, int c, int d)
 {
@@ -100,14 +105,25 @@ void Entity::UpdateEntity(int a, int b, int c, int d)
 	position.y = b;
 	entityState = EntityState(c);
 	value = d;
+
+	//update search if nothing close
+	//TODO improve search algorithim
+	if (GetDistance(position, searchTarget) < 200) {
+		SetNewSearchTarget();
+	}
+}
+
+void Entity::SetNewSearchTarget() {
+	int x = rand() % XMAX;
+	int y = rand() % YMAX;
+	searchTarget = Point(x, y);
 }
 
 bool Entity::IsNearGhost() {
-	//vector<Entity> thing = *visibleGhosts;
-//	if(thing.size > 0){}
+
 	for (Entity ghost : ghosts) {
 		//TODO make it move away when near a ghost instead of calling it not near
-		if (GetDistance(ghost.position, position) < 1760 && GetDistance(ghost.position, position) > 900) {
+		if (GetDistance(ghost.position, position) < 1650 && GetDistance(ghost.position, position) > 900) {
 			return true;
 		}
 	}
@@ -133,7 +149,7 @@ int Entity::ScoreCapture() {
 		score += 100;
 	}
 	if (entityState == EntityState::carryingGhost) {
-		score -= 100;
+		score -= 200;
 	}
 	return score;
 }
@@ -141,7 +157,7 @@ int Entity::ScoreCapture() {
 int Entity::ScoreGoBack() {
 	int score = 0;
 	if (entityState == EntityState::carryingGhost) {
-		score += 100;
+		score += 250;
 	}
 	return score;
 }
@@ -151,7 +167,7 @@ int Entity::ScoreRelease() {
 	if (entityState == EntityState::carryingGhost) {
 		score += 100;
 	}
-	if (GetDistance(position, Point(0,0)) < 1600) {
+	if (GetDistance(position, baseLocation) < 1600) {
 		score += 50;
 	}
 	if (entityState != EntityState::carryingGhost) {
@@ -190,15 +206,6 @@ string Entity::GetAction() {
 	//todo: move logic into functions
 	switch (chosenAction) {
 		case EntityAction::search:
-			//TODO improve search algorithim
-			if (GetDistance(position, searchTarget) < 100) {
-				//get new search target if nothing close
-				srand(time(NULL)* entityID);
-				int x = rand() % xMax;
-				int y = rand() % yMax;
-				searchTarget = Point(x, y);
-			}
-
 			actionText = "MOVE " + to_string(searchTarget.x) + " " + to_string(searchTarget.y);
 			break;
 		case EntityAction::capture:
@@ -212,7 +219,7 @@ string Entity::GetAction() {
 			actionText = "BUST " + to_string(closestGhostId);
 			break;
 		case EntityAction::goBack:
-			actionText = "MOVE " + xMin + " " + yMin;
+			actionText = "MOVE " + to_string(baseLocation.x) + " " + to_string(baseLocation.y);
 			break;
 		case EntityAction::release:
 			actionText = "RELEASE";
@@ -229,7 +236,13 @@ string Entity::GetAction() {
 
 int main()
 {
+	int myTeamId = 0;
+
 	visibleEntities.clear();
+	ghosts.clear();
+	srand(time(NULL));
+	EntityType myTeam = EntityType(myTeamId);
+
 	//game paramaters
 	int entities = 2;
 
@@ -239,11 +252,9 @@ int main()
 	visibleEntities.push_back(myEntity);
 	visibleEntities.push_back(myGhost);
 
-	//reset ghosts since we dont need their persistant state
-	ghosts.clear();
 	//add new entities
 	for (Entity visibleEntity : visibleEntities) {
-		if (visibleEntity.entityType == EntityType::myTeam) {
+		if (visibleEntity.entityType == myTeam) {
 			bool busterExists = false;
 			for (Entity buster : myBusters) {
 				if (buster.entityID == visibleEntity.entityID) {
@@ -264,10 +275,9 @@ int main()
 
 	//update busters
 	for (Entity visibleEntity : visibleEntities) {
-		for (Entity buster : myBusters) {
-			if (buster.entityID == visibleEntity.entityID) {
-				buster.UpdateEntity(500, visibleEntity.position.y, (int)visibleEntity.entityState, visibleEntity.value);
-				int x;
+		for (int i = 0; i < myBusters.size(); i++){
+			if (myBusters[i].entityID == visibleEntity.entityID) {
+				myBusters[i].UpdateEntity(visibleEntity.position.x, visibleEntity.position.y, (int)visibleEntity.entityState, visibleEntity.value);
 			}
 		}
 	}
