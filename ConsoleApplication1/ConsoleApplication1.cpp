@@ -37,7 +37,7 @@ enum class EntityType {
 	ghost = -1
 };
 enum class EntityAction {
-	search, approach, capture, goBack, release
+	search, approach, capture, goBack, release, stun
 };
 
 int GetDistance(Point point1, Point point2)
@@ -53,6 +53,7 @@ class Entity {
 	int ScoreCapture();
 	int ScoreGoBack();
 	int ScoreRelease();
+	int ScoreStun();
 	bool IsNearGhost();
 	void SetNewSearchTarget();
 public:
@@ -64,10 +65,12 @@ public:
 	EntityState entityState;
 	EntityAction entityAction;
 	int value;
+	int timeSinceLastStun;
 
 	Entity();
 	Entity(int, int, int, int, int, int);
 	void UpdateEntity(int, int, int, int);
+	Entity GetClosestEntityByType(vector<Entity>*, EntityType);
 	
 	string GetAction();
 
@@ -76,6 +79,8 @@ public:
 vector<Entity> visibleEntities;
 vector<Entity> myBusters;
 vector<Entity> ghosts;
+EntityType myTeam;
+EntityType enemyTeam;
 
 Entity::Entity()
 {}
@@ -87,6 +92,7 @@ Entity::Entity(int a, int b, int c, int d, int e,  int g)
 	entityType = EntityType(d);
 	entityState = EntityState(e);
 	value = g;
+	timeSinceLastStun = 20;
 
 	SetNewSearchTarget();
 
@@ -106,24 +112,41 @@ void Entity::UpdateEntity(int a, int b, int c, int d)
 	entityState = EntityState(c);
 	value = d;
 
+	//may not want to autoincrement this in case functionis called elsewhere
+	timeSinceLastStun++;
+
 	//update search if nothing close
-	//TODO improve search algorithim
+
 	if (GetDistance(position, searchTarget) < 200) {
 		SetNewSearchTarget();
 	}
 }
 
+//TODO improve search algorithim
 void Entity::SetNewSearchTarget() {
 	int x = rand() % XMAX;
 	int y = rand() % YMAX;
 	searchTarget = Point(x, y);
 }
 
+Entity Entity::GetClosestEntityByType(vector<Entity>* entities, EntityType type) {
+	int closestEntityDistance = 999999;
+	Entity closestEntity;
+
+	for (Entity entity : *entities) {
+		if (GetDistance(entity.position, position) < closestEntityDistance && entity.entityType == type) {
+			closestEntityDistance = GetDistance(entity.position, position);
+			closestEntity = entity;
+		}
+	}
+	return closestEntity;
+}
+
 bool Entity::IsNearGhost() {
 
 	for (Entity ghost : ghosts) {
 		//TODO make it move away when near a ghost instead of calling it not near
-		if (GetDistance(ghost.position, position) < 1650 && GetDistance(ghost.position, position) > 900) {
+		if (GetDistance(ghost.position, position) < 1750 && GetDistance(ghost.position, position) > 900) {
 			return true;
 		}
 	}
@@ -148,8 +171,14 @@ int Entity::ScoreCapture() {
 	if (IsNearGhost()) {
 		score += 100;
 	}
+	else {
+		score -= 100;
+	}
 	if (entityState == EntityState::carryingGhost) {
-		score -= 200;
+		score -= 100;
+	}
+	else {
+		score += 100;
 	}
 	return score;
 }
@@ -157,7 +186,10 @@ int Entity::ScoreCapture() {
 int Entity::ScoreGoBack() {
 	int score = 0;
 	if (entityState == EntityState::carryingGhost) {
-		score += 250;
+		score += 100;
+	}
+	if (entityState != EntityState::carryingGhost) {
+		score -= 100;
 	}
 	return score;
 }
@@ -176,6 +208,20 @@ int Entity::ScoreRelease() {
 	return score;
 }
 
+int Entity::ScoreStun() {
+	int score = 0;
+
+	Entity colsestEnemy = GetClosestEntityByType(&visibleEntities, enemyTeam);
+	if (GetDistance(colsestEnemy.position, position) < 1700 && timeSinceLastStun >= 20) {
+		score += 250;
+	}
+	else {
+		score -= 250;
+	}
+
+	return score;
+}
+
 
 string Entity::GetAction() {
 	vector<tuple<int, EntityAction>> scores;
@@ -183,11 +229,13 @@ string Entity::GetAction() {
 	tuple<int, EntityAction> captureScore(ScoreCapture(), EntityAction::capture);
 	tuple<int, EntityAction> goBackScore(ScoreGoBack(), EntityAction::goBack);
 	tuple<int, EntityAction> releaseScore(ScoreRelease(), EntityAction::release);
+	tuple<int, EntityAction> stunScore(ScoreStun(), EntityAction::stun);
 
 	scores.push_back(searchScore);
 	scores.push_back(captureScore);
 	scores.push_back(goBackScore);
 	scores.push_back(releaseScore);
+	scores.push_back(stunScore);
 	
 	int highestScore = 0;
 	EntityAction chosenAction;
@@ -209,13 +257,7 @@ string Entity::GetAction() {
 			actionText = "MOVE " + to_string(searchTarget.x) + " " + to_string(searchTarget.y);
 			break;
 		case EntityAction::capture:
-
-			for (Entity ghost : ghosts) {
-				if (GetDistance(ghost.position, position) < closestGhostDistance) {
-					closestGhostDistance = GetDistance(ghost.position, position);
-					closestGhostId = ghost.entityID;
-				}
-			}
+			closestGhostId = GetClosestEntityByType(&visibleEntities, EntityType::ghost).entityID;
 			actionText = "BUST " + to_string(closestGhostId);
 			break;
 		case EntityAction::goBack:
@@ -223,6 +265,11 @@ string Entity::GetAction() {
 			break;
 		case EntityAction::release:
 			actionText = "RELEASE";
+			break;
+		case EntityAction::stun:
+			timeSinceLastStun = 0;
+			actionText = "STUN " + to_string(GetClosestEntityByType(&visibleEntities, enemyTeam).entityID);
+			//TODO, need to reset time since last stun
 			break;
 		default:
 			actionText = "no action chosen";
@@ -233,7 +280,6 @@ string Entity::GetAction() {
 }
 
 
-
 int main()
 {
 	int myTeamId = 0;
@@ -241,7 +287,14 @@ int main()
 	visibleEntities.clear();
 	ghosts.clear();
 	srand(time(NULL));
-	EntityType myTeam = EntityType(myTeamId);
+	myTeam = EntityType(myTeamId);
+
+	if (myTeam == EntityType::teamOrange) {
+		enemyTeam = EntityType::teamPurple;
+	}
+	else {
+		enemyTeam = EntityType::teamOrange;
+	}
 
 	//game paramaters
 	int entities = 2;
@@ -283,8 +336,8 @@ int main()
 	}
 
 	//get buster action
-	for (Entity buster : myBusters) {
-		cout << buster.GetAction() << endl;
+	for (int i = 0; i < myBusters.size(); i++) {
+		cout << myBusters[i].GetAction() << endl;
 	}
 
 
